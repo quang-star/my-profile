@@ -1,0 +1,20 @@
+spring:
+  datasource:
+    url: jdbc:h2:mem:portfoliotest;MODE=PostgreSQL;DB_CLOSE_DELAY=-1
+    driver-class-name: org.h2.Driver
+    username: sa
+    password:
+  jpa:
+    hibernate:
+      ddl-auto: validate
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+
+app:
+  jwt:
+    secret: test-jwt-secret-key-at-least-32-characters-long-for-hmac
+    expiration-ms: 3600000
+  admin:
+    username: admin
+    password: secret-password

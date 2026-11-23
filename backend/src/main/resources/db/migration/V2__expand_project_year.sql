@@ -1,0 +1,1 @@
+ALTER TABLE projects ALTER COLUMN project_year TYPE VARCHAR(64);
