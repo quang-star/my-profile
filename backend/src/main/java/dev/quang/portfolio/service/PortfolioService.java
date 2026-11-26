@@ -26,6 +26,7 @@ public class PortfolioService {
     private final EducationRepository educationRepository;
     private final ProjectRepository projectRepository;
     private final ContactMessageRepository contactMessageRepository;
+    private final SystemDataSeeder systemDataSeeder;
     private final ObjectMapper objectMapper;
 
     public PortfolioService(
@@ -35,6 +36,7 @@ public class PortfolioService {
             EducationRepository educationRepository,
             ProjectRepository projectRepository,
             ContactMessageRepository contactMessageRepository,
+            SystemDataSeeder systemDataSeeder,
             ObjectMapper objectMapper
     ) {
         this.profileRepository = profileRepository;
@@ -43,6 +45,7 @@ public class PortfolioService {
         this.educationRepository = educationRepository;
         this.projectRepository = projectRepository;
         this.contactMessageRepository = contactMessageRepository;
+        this.systemDataSeeder = systemDataSeeder;
         this.objectMapper = objectMapper;
     }
 
@@ -240,6 +243,7 @@ public class PortfolioService {
     @Transactional
     public ContactMessageDto createContactMessage(ContactRequest request) {
         ContactMessageEntity entity = new ContactMessageEntity();
+        entity.setPageId(systemDataSeeder.getDefaultPageId());
         entity.setName(request.name().trim());
         entity.setEmail(request.email().trim());
         String subject = request.subject() == null || request.subject().isBlank()

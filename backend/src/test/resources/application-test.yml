@@ -18,3 +18,5 @@ app:
   admin:
     username: admin
     password: secret-password
+  rate-limit:
+    enabled: false

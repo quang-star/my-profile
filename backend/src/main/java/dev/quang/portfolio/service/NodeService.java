@@ -4,7 +4,10 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.quang.portfolio.dto.NodeDtos.*;
 import dev.quang.portfolio.entity.ContentNodeEntity;
+import dev.quang.portfolio.entity.PageEntity;
 import dev.quang.portfolio.repository.ContentNodeRepository;
+import dev.quang.portfolio.repository.PageRepository;
+import dev.quang.portfolio.security.AuthenticatedUser;
 import java.time.OffsetDateTime;
 import java.util.*;
 import org.springframework.http.HttpStatus;
@@ -15,19 +18,39 @@ import org.springframework.web.server.ResponseStatusException;
 @Service
 public class NodeService {
 
+    private static final int MAX_NODES_PER_PAGE = 300;
+    private static final int MAX_CONTENT_LENGTH = 25_000;
     private static final TypeReference<Map<String, Object>> MAP_TYPE = new TypeReference<>() {};
 
     private final ContentNodeRepository nodeRepository;
+    private final PageRepository pageRepository;
+    private final HtmlSanitizerService htmlSanitizerService;
     private final ObjectMapper objectMapper;
 
-    public NodeService(ContentNodeRepository nodeRepository, ObjectMapper objectMapper) {
+    public NodeService(
+            ContentNodeRepository nodeRepository,
+            PageRepository pageRepository,
+            HtmlSanitizerService htmlSanitizerService,
+            ObjectMapper objectMapper
+    ) {
         this.nodeRepository = nodeRepository;
+        this.pageRepository = pageRepository;
+        this.htmlSanitizerService = htmlSanitizerService;
         this.objectMapper = objectMapper;
     }
 
+    public PageEntity requirePageEditAccess(String pageId, AuthenticatedUser currentUser) {
+        PageEntity page = pageRepository.findById(pageId)
+                .orElseThrow(() -> new NoSuchElementException("Page not found: " + pageId));
+        if (!currentUser.isSuperAdmin() && !page.getOwnerId().equals(currentUser.id())) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "You do not have permission to edit this page");
+        }
+        return page;
+    }
+
     @Transactional(readOnly = true)
-    public List<ContentNodeDto> getTree() {
-        List<ContentNodeEntity> all = nodeRepository.findAllByOrderBySortOrderAscIdAsc();
+    public List<ContentNodeDto> getTreeForPage(String pageId) {
+        List<ContentNodeEntity> all = nodeRepository.findByPageIdOrderBySortOrderAscIdAsc(pageId);
         Map<String, List<ContentNodeEntity>> byParent = new LinkedHashMap<>();
         for (ContentNodeEntity entity : all) {
             String key = entity.getParentId() == null ? "__ROOT__" : entity.getParentId();
@@ -54,12 +77,12 @@ public class NodeService {
     }
 
     @Transactional
-    public ContentNodeDto saveNode(String pathId, SaveNodeRequest request) {
+    public ContentNodeDto saveNodeForPage(String pageId, String pathId, SaveNodeRequest request) {
         String id = pathId != null && !pathId.isBlank()
                 ? pathId.trim()
                 : (request.id() != null && !request.id().isBlank()
                 ? request.id().trim()
-                : "node-" + UUID.randomUUID().toString().substring(0, 8));
+                : "n-" + UUID.randomUUID().toString().replace("-", "").substring(0, 12));
 
         String parentId = request.parentId() != null && !request.parentId().isBlank()
                 ? request.parentId().trim()
@@ -69,17 +92,32 @@ public class NodeService {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "A node cannot be its own parent");
         }
         if (parentId != null) {
-            if (!nodeRepository.existsById(parentId)) {
-                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Parent node not found: " + parentId);
+            ContentNodeEntity parent = nodeRepository.findById(parentId)
+                    .orElseThrow(() -> new ResponseStatusException(HttpStatus.BAD_REQUEST, "Parent node not found: " + parentId));
+            if (!pageId.equals(parent.getPageId())) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Parent node belongs to another page");
             }
             if (isDescendant(id, parentId)) {
                 throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Cannot move a node inside its own descendant");
             }
         }
 
-        ContentNodeEntity entity = nodeRepository.findById(id).orElseGet(ContentNodeEntity::new);
+        Optional<ContentNodeEntity> existingOpt = nodeRepository.findById(id);
+        if (existingOpt.isPresent() && !pageId.equals(existingOpt.get().getPageId())) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Node belongs to another page");
+        }
+
+        ContentNodeEntity entity = existingOpt.orElseGet(ContentNodeEntity::new);
         boolean isNew = entity.getId() == null;
+        if (isNew && nodeRepository.countByPageId(pageId) >= MAX_NODES_PER_PAGE) {
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_REQUEST,
+                    "Maximum " + MAX_NODES_PER_PAGE + " nodes allowed per page"
+            );
+        }
+        validateContentLength(request.contentVi(), request.contentEn());
         entity.setId(id);
+        entity.setPageId(pageId);
         entity.setParentId(parentId);
         entity.setTag(request.tag().trim().toLowerCase(Locale.ROOT));
 
@@ -87,26 +125,26 @@ public class NodeService {
             if (!isNew) {
                 throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Insert position is only available for new blocks");
             }
-            entity.setSortOrder(makeRoomBefore(parentId, request.beforeId()));
+            entity.setSortOrder(makeRoomBefore(pageId, parentId, request.beforeId()));
         } else if (request.sortOrder() != null) {
             entity.setSortOrder(request.sortOrder());
         } else if (isNew) {
-            List<ContentNodeEntity> siblings = nodeRepository.findByParentIdOrderBySortOrderAscIdAsc(parentId);
+            List<ContentNodeEntity> siblings = nodeRepository.findByPageIdAndParentIdOrderBySortOrderAscIdAsc(pageId, parentId);
             int maxOrder = siblings.stream().mapToInt(ContentNodeEntity::getSortOrder).max().orElse(-1);
             entity.setSortOrder(maxOrder + 1);
         }
 
         entity.setAttrsJson(writeAttrs(request.attrs()));
-        entity.setContentVi(request.contentVi() != null ? request.contentVi() : "");
-        entity.setContentEn(request.contentEn() != null ? request.contentEn() : "");
+        entity.setContentVi(htmlSanitizerService.sanitize(request.contentVi()));
+        entity.setContentEn(htmlSanitizerService.sanitize(request.contentEn()));
         entity.setUpdatedAt(OffsetDateTime.now());
 
         ContentNodeEntity saved = nodeRepository.save(entity);
         return toDto(saved, List.of());
     }
 
-    private int makeRoomBefore(String parentId, String beforeId) {
-        List<ContentNodeEntity> siblings = nodeRepository.findByParentIdOrderBySortOrderAscIdAsc(parentId);
+    private int makeRoomBefore(String pageId, String parentId, String beforeId) {
+        List<ContentNodeEntity> siblings = nodeRepository.findByPageIdAndParentIdOrderBySortOrderAscIdAsc(pageId, parentId);
         int insertionIndex = 0;
         while (insertionIndex < siblings.size() && !siblings.get(insertionIndex).getId().equals(beforeId)) {
             insertionIndex++;
@@ -121,33 +159,47 @@ public class NodeService {
     }
 
     @Transactional
-    public void deleteNode(String id) {
-        if (!nodeRepository.existsById(id)) {
-            throw new NoSuchElementException("Node not found: " + id);
+    public void deleteNodeForPage(String pageId, String id) {
+        ContentNodeEntity entity = nodeRepository.findById(id)
+                .orElseThrow(() -> new NoSuchElementException("Node not found: " + id));
+        if (!pageId.equals(entity.getPageId())) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Node belongs to another page");
         }
-        // Delete descendants explicitly for H2/PostgreSQL compatibility regardless of FK cascade quirks
-        deleteRecursive(id);
+        deleteRecursive(pageId, id);
     }
 
-    private void deleteRecursive(String id) {
-        List<ContentNodeEntity> children = nodeRepository.findByParentIdOrderBySortOrderAscIdAsc(id);
+    private void deleteRecursive(String pageId, String id) {
+        List<ContentNodeEntity> children = nodeRepository.findByPageIdAndParentIdOrderBySortOrderAscIdAsc(pageId, id);
         for (ContentNodeEntity child : children) {
-            deleteRecursive(child.getId());
+            deleteRecursive(pageId, child.getId());
         }
         nodeRepository.deleteById(id);
     }
 
     @Transactional
-    public List<ContentNodeDto> reorderNodes(ReorderNodesRequest request) {
+    public List<ContentNodeDto> reorderNodesForPage(String pageId, ReorderNodesRequest request) {
         if (request == null || request.items() == null || request.items().isEmpty()) {
-            return getTree();
+            return getTreeForPage(pageId);
         }
         for (NodeReorderItem item : request.items()) {
             ContentNodeEntity entity = nodeRepository.findById(item.id())
                     .orElseThrow(() -> new NoSuchElementException("Node not found: " + item.id()));
+            if (!pageId.equals(entity.getPageId())) {
+                throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Node belongs to another page: " + item.id());
+            }
             String newParent = item.parentId() != null && !item.parentId().isBlank() ? item.parentId().trim() : null;
             if (entity.getId().equals(newParent)) {
                 throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "A node cannot be its own parent");
+            }
+            if (newParent != null) {
+                ContentNodeEntity parent = nodeRepository.findById(newParent)
+                        .orElseThrow(() -> new ResponseStatusException(HttpStatus.BAD_REQUEST, "Parent node not found: " + newParent));
+                if (!pageId.equals(parent.getPageId())) {
+                    throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Parent node belongs to another page");
+                }
+                if (isDescendant(entity.getId(), newParent)) {
+                    throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Cannot move a node inside its own descendant");
+                }
             }
             entity.setParentId(newParent);
             entity.setSortOrder(item.sortOrder());
@@ -164,7 +216,7 @@ public class NodeService {
             entity.setUpdatedAt(OffsetDateTime.now());
             nodeRepository.save(entity);
         }
-        return getTree();
+        return getTreeForPage(pageId);
     }
 
     private boolean isDescendant(String ancestorId, String candidateId) {
@@ -182,7 +234,7 @@ public class NodeService {
     }
 
     @Transactional
-    public List<ContentNodeDto> applyChanges(BlockChangeRequest request) {
+    public List<ContentNodeDto> applyChangesForPage(String pageId, BlockChangeRequest request) {
         Map<String, BlockState> expected = indexStates(request.expected());
         Map<String, BlockState> replacement = indexStates(request.replacement());
         Set<String> changed = new LinkedHashSet<>(expected.keySet());
@@ -190,12 +242,15 @@ public class NodeService {
 
         Map<String, ContentNodeEntity> entities = new HashMap<>();
         Map<String, String> parents = new HashMap<>();
-        for (ContentNodeEntity node : nodeRepository.lockCanvasNodes()) {
+        for (ContentNodeEntity node : nodeRepository.lockCanvasNodesByPageId(pageId)) {
             entities.put(node.getId(), node);
             parents.put(node.getId(), node.getParentId());
         }
         for (String id : changed) {
             ContentNodeEntity node = entities.get(id);
+            if (node == null && nodeRepository.existsById(id)) {
+                throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Node ID belongs to another page: " + id);
+            }
             BlockState current = node == null ? null : new BlockState(id, node.getParentId(), node.getTag(),
                     node.getSortOrder(), readAttrs(node.getAttrsJson()), node.getContentVi(), node.getContentEn());
             var currentJson = objectMapper.valueToTree(current);
@@ -209,24 +264,93 @@ public class NodeService {
             else parents.put(id, next.parentId());
         }
 
+        if (parents.size() > MAX_NODES_PER_PAGE) {
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_REQUEST,
+                    "Maximum " + MAX_NODES_PER_PAGE + " nodes allowed per page"
+            );
+        }
+
         List<String> ordered = parentFirst(parents);
         for (String id : ordered) {
             BlockState state = replacement.get(id);
             if (state == null) continue;
+            validateContentLength(state.contentVi(), state.contentEn());
             ContentNodeEntity node = entities.getOrDefault(id, new ContentNodeEntity());
             node.setId(state.id());
+            node.setPageId(pageId);
             node.setParentId(state.parentId());
-            node.setTag(state.tag());
+            node.setTag(state.tag().trim().toLowerCase(Locale.ROOT));
             node.setSortOrder(state.sortOrder());
             node.setAttrsJson(writeAttrs(state.attrs()));
-            node.setContentVi(state.contentVi());
-            node.setContentEn(state.contentEn());
+            node.setContentVi(htmlSanitizerService.sanitize(state.contentVi()));
+            node.setContentEn(htmlSanitizerService.sanitize(state.contentEn()));
             node.setUpdatedAt(OffsetDateTime.now());
             nodeRepository.saveAndFlush(node);
         }
         List<String> removed = changed.stream().filter(id -> !replacement.containsKey(id)).toList();
         if (!removed.isEmpty()) nodeRepository.deleteAllByIdInBatch(removed);
-        return getTree();
+        return getTreeForPage(pageId);
+    }
+
+    @Transactional
+    public List<ContentNodeDto> importNodesForPage(String pageId, List<BlockState> nodes) {
+        if (nodes.size() > MAX_NODES_PER_PAGE) {
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_REQUEST,
+                    "Maximum " + MAX_NODES_PER_PAGE + " nodes allowed per page"
+            );
+        }
+        for (BlockState state : nodes) {
+            validateContentLength(state.contentVi(), state.contentEn());
+        }
+
+        Map<String, BlockState> indexed = indexStates(nodes);
+        Map<String, String> parents = new LinkedHashMap<>();
+        for (BlockState state : indexed.values()) {
+            parents.put(state.id(), state.parentId());
+        }
+        List<String> orderedIds = parentFirst(parents);
+
+        Map<String, String> idMap = new HashMap<>(orderedIds.size());
+        for (String oldId : orderedIds) {
+            idMap.put(oldId, "n-" + UUID.randomUUID().toString().replace("-", "").substring(0, 12));
+        }
+
+        nodeRepository.clearParentIdsByPageId(pageId);
+        nodeRepository.deleteAllByPageId(pageId);
+        nodeRepository.flush();
+
+        OffsetDateTime now = OffsetDateTime.now();
+        List<ContentNodeEntity> toSave = new ArrayList<>(orderedIds.size());
+        for (String oldId : orderedIds) {
+            BlockState state = indexed.get(oldId);
+            ContentNodeEntity entity = new ContentNodeEntity();
+            entity.setId(idMap.get(oldId));
+            entity.setPageId(pageId);
+            entity.setParentId(state.parentId() != null ? idMap.get(state.parentId()) : null);
+            entity.setTag(state.tag().trim().toLowerCase(Locale.ROOT));
+            entity.setSortOrder(state.sortOrder());
+            entity.setAttrsJson(writeAttrs(state.attrs()));
+            entity.setContentVi(htmlSanitizerService.sanitize(state.contentVi()));
+            entity.setContentEn(htmlSanitizerService.sanitize(state.contentEn()));
+            entity.setUpdatedAt(now);
+            toSave.add(entity);
+        }
+        nodeRepository.saveAll(toSave);
+        nodeRepository.flush();
+
+        return getTreeForPage(pageId);
+    }
+
+    private void validateContentLength(String contentVi, String contentEn) {
+        if ((contentVi != null && contentVi.length() > MAX_CONTENT_LENGTH)
+                || (contentEn != null && contentEn.length() > MAX_CONTENT_LENGTH)) {
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_REQUEST,
+                    "Node content exceeds maximum length of " + MAX_CONTENT_LENGTH + " characters"
+            );
+        }
     }
 
     private Map<String, BlockState> indexStates(List<BlockState> states) {
