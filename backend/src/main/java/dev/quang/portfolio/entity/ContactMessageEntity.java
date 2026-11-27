@@ -16,6 +16,9 @@ public class ContactMessageEntity {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
+    @Column(name = "page_id", length = 80)
+    private String pageId;
+
     @Column(nullable = false, length = 150)
     private String name;
 
@@ -36,6 +39,8 @@ public class ContactMessageEntity {
 
     public Long getId() { return id; }
     public void setId(Long id) { this.id = id; }
+    public String getPageId() { return pageId; }
+    public void setPageId(String pageId) { this.pageId = pageId; }
     public String getName() { return name; }
     public void setName(String name) { this.name = name; }
     public String getEmail() { return email; }

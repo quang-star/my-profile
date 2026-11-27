@@ -1,5 +1,6 @@
 package dev.quang.portfolio.security;
 
+import dev.quang.portfolio.entity.UserEntity;
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.JwtException;
 import io.jsonwebtoken.Jwts;
@@ -35,30 +36,34 @@ public class JwtService {
         }
     }
 
-    public String generateToken(String username) {
+    public String generateToken(UserEntity user) {
         Date now = new Date();
         Date expiry = new Date(now.getTime() + expirationMs);
         return Jwts.builder()
-                .subject(username)
-                .claim("role", "ROLE_ADMIN")
+                .subject(user.getId())
+                .claim("username", user.getUsername())
+                .claim("role", user.getRole())
                 .issuedAt(now)
                 .expiration(expiry)
                 .signWith(signingKey)
                 .compact();
     }
 
-    public String extractUsername(String token) {
-        Claims claims = Jwts.parser()
+    public Claims parseClaims(String token) {
+        return Jwts.parser()
                 .verifyWith(signingKey)
                 .build()
                 .parseSignedClaims(token)
                 .getPayload();
-        return claims.getSubject();
+    }
+
+    public String extractUserId(String token) {
+        return parseClaims(token).getSubject();
     }
 
     public boolean isValid(String token) {
         try {
-            extractUsername(token);
+            parseClaims(token);
             return true;
         } catch (JwtException | IllegalArgumentException ex) {
             return false;

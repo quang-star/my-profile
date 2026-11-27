@@ -131,8 +131,13 @@ public final class PortfolioDtos {
             @NotBlank String name,
             @NotBlank @Email String email,
             String subject,
-            @NotBlank String message
-    ) {}
+            @NotBlank String message,
+            String website
+    ) {
+        public ContactRequest(String name, String email, String subject, String message) {
+            this(name, email, subject, message, null);
+        }
+    }
 
     public record ContactMessageDto(
             Long id,

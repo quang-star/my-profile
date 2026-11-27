@@ -14,6 +14,9 @@ public class ContentNodeEntity {
     @Column(length = 80)
     private String id;
 
+    @Column(name = "page_id", length = 80)
+    private String pageId;
+
     @Column(name = "parent_id", length = 80)
     private String parentId;
 
@@ -41,6 +44,14 @@ public class ContentNodeEntity {
 
     public void setId(String id) {
         this.id = id;
+    }
+
+    public String getPageId() {
+        return pageId;
+    }
+
+    public void setPageId(String pageId) {
+        this.pageId = pageId;
     }
 
     public String getParentId() {
