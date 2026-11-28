@@ -211,4 +211,27 @@ public final class MultiTenantDtos {
             Boolean isHomeFeatured,
             String visibility
     ) {}
+
+    public record HomeConfigDto(
+            String heroPreview,
+            String featured,
+            String features,
+            String templates,
+            String howItWorks,
+            String bottomCta
+    ) {}
+
+    public record FeatureFlagsDto(
+            Boolean registrationEnabled,
+            Boolean googleLoginEnabled,
+            Boolean aiCopilotEnabled,
+            Boolean aiTranslateEnabled,
+            Boolean cvImportEnabled,
+            Boolean pdfExportEnabled,
+            Boolean mediaUploadEnabled,
+            Boolean publicTemplatesEnabled,
+            Boolean publicContactEnabled,
+            Boolean maintenanceMode,
+            String maintenanceMessage
+    ) {}
 }

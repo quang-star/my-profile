@@ -1,5 +1,6 @@
 package dev.quang.portfolio.controller;
 
+import dev.quang.portfolio.dto.MultiTenantDtos.FeatureFlagsDto;
 import dev.quang.portfolio.dto.MultiTenantDtos.MyFilesResponse;
 import dev.quang.portfolio.dto.MultiTenantDtos.UploadedFileDto;
 import dev.quang.portfolio.entity.ContentNodeEntity;
@@ -11,6 +12,7 @@ import dev.quang.portfolio.repository.PageRepository;
 import dev.quang.portfolio.repository.UploadedFileRepository;
 import dev.quang.portfolio.repository.UserRepository;
 import dev.quang.portfolio.security.AuthenticatedUser;
+import dev.quang.portfolio.service.FeatureFlagsService;
 import java.io.IOException;
 import java.io.InputStream;
 import java.time.Instant;
@@ -50,17 +52,20 @@ public class FileController {
     private final UserRepository userRepository;
     private final PageRepository pageRepository;
     private final ContentNodeRepository contentNodeRepository;
+    private final FeatureFlagsService featureFlagsService;
 
     public FileController(
             UploadedFileRepository uploadedFileRepository,
             UserRepository userRepository,
             PageRepository pageRepository,
-            ContentNodeRepository contentNodeRepository
+            ContentNodeRepository contentNodeRepository,
+            FeatureFlagsService featureFlagsService
     ) {
         this.uploadedFileRepository = uploadedFileRepository;
         this.userRepository = userRepository;
         this.pageRepository = pageRepository;
         this.contentNodeRepository = contentNodeRepository;
+        this.featureFlagsService = featureFlagsService;
     }
 
     @PostMapping("/upload")
@@ -83,6 +88,8 @@ public class FileController {
             AuthenticatedUser currentUser,
             MultipartFile file
     ) throws IOException {
+        FeatureFlagsDto flags = featureFlagsService.getFlags();
+        featureFlagsService.requireFeature(flags.mediaUploadEnabled(), currentUser, "Media upload");
         if (file == null || file.isEmpty()) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "File is empty");
         }

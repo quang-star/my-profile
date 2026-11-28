@@ -33,8 +33,7 @@ public class AiDtos {
     ) {}
 
     public record AiStatusDto(
-            boolean available,
-            String model
+            boolean available
     ) {}
 
     public record ParseCvRequest(
@@ -48,7 +47,6 @@ public class AiDtos {
     public record ParseCvResponse(
             Map<String, Object> theme,
             Map<String, Object> doc,
-            String modelUsed,
             List<String> notes
     ) {}
 
@@ -59,7 +57,6 @@ public class AiDtos {
 
     public record TranslateDocResponse(
             Map<String, Object> doc,
-            String modelUsed,
             int translatedCount
     ) {}
 
@@ -83,7 +80,6 @@ public class AiDtos {
             String reply,
             Map<String, Object> theme,
             Map<String, Object> doc,
-            String modelUsed,
             List<String> notes
     ) {}
 }

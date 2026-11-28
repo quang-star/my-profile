@@ -2,6 +2,7 @@ package dev.quang.portfolio.controller;
 
 import dev.quang.portfolio.dto.MultiTenantDtos.AuthResponse;
 import dev.quang.portfolio.dto.MultiTenantDtos.ChangePasswordRequest;
+import dev.quang.portfolio.dto.MultiTenantDtos.FeatureFlagsDto;
 import dev.quang.portfolio.dto.MultiTenantDtos.ForgotPasswordRequest;
 import dev.quang.portfolio.dto.MultiTenantDtos.ForgotPasswordResponse;
 import dev.quang.portfolio.dto.MultiTenantDtos.GoogleConfigDto;
@@ -19,6 +20,7 @@ import dev.quang.portfolio.repository.UploadedFileRepository;
 import dev.quang.portfolio.repository.UserRepository;
 import dev.quang.portfolio.security.AuthenticatedUser;
 import dev.quang.portfolio.security.JwtService;
+import dev.quang.portfolio.service.FeatureFlagsService;
 import dev.quang.portfolio.service.GoogleTokenVerifierService;
 import dev.quang.portfolio.service.GoogleTokenVerifierService.GoogleUserInfo;
 import dev.quang.portfolio.service.PasswordResetMailService;
@@ -64,6 +66,7 @@ public class AuthController {
     private final GoogleTokenVerifierService googleTokenVerifierService;
     private final PasswordResetTokenRepository passwordResetTokenRepository;
     private final PasswordResetMailService passwordResetMailService;
+    private final FeatureFlagsService featureFlagsService;
 
     public AuthController(
             JwtService jwtService,
@@ -73,7 +76,8 @@ public class AuthController {
             UploadedFileRepository uploadedFileRepository,
             GoogleTokenVerifierService googleTokenVerifierService,
             PasswordResetTokenRepository passwordResetTokenRepository,
-            PasswordResetMailService passwordResetMailService
+            PasswordResetMailService passwordResetMailService,
+            FeatureFlagsService featureFlagsService
     ) {
         this.jwtService = jwtService;
         this.passwordEncoder = passwordEncoder;
@@ -83,17 +87,26 @@ public class AuthController {
         this.googleTokenVerifierService = googleTokenVerifierService;
         this.passwordResetTokenRepository = passwordResetTokenRepository;
         this.passwordResetMailService = passwordResetMailService;
+        this.featureFlagsService = featureFlagsService;
     }
 
     @GetMapping("/google-config")
     public GoogleConfigDto googleConfig() {
-        boolean enabled = googleTokenVerifierService.isEnabled();
+        FeatureFlagsDto flags = featureFlagsService.getFlags();
+        boolean enabled = googleTokenVerifierService.isEnabled() && Boolean.TRUE.equals(flags.googleLoginEnabled());
         return new GoogleConfigDto(enabled, enabled ? googleTokenVerifierService.getClientId() : "");
     }
 
     @PostMapping("/register")
     @ResponseStatus(HttpStatus.CREATED)
     public AuthResponse register(@Valid @RequestBody RegisterRequest request) {
+        FeatureFlagsDto flags = featureFlagsService.getFlags();
+        if (Boolean.TRUE.equals(flags.maintenanceMode())) {
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "System is currently under maintenance");
+        }
+        if (!Boolean.TRUE.equals(flags.registrationEnabled())) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Registration is temporarily disabled");
+        }
         String username = validateAndNormalizeUsername(request.username());
         String email = request.email().trim().toLowerCase(Locale.ROOT);
         if (userRepository.existsByUsernameIgnoreCase(username)) {
@@ -146,6 +159,10 @@ public class AuthController {
         if (!"ACTIVE".equalsIgnoreCase(user.getStatus())) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Account is banned");
         }
+        FeatureFlagsDto flags = featureFlagsService.getFlags();
+        if (Boolean.TRUE.equals(flags.maintenanceMode()) && !"SUPER_ADMIN".equalsIgnoreCase(user.getRole())) {
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "System is currently under maintenance");
+        }
 
         String token = jwtService.generateToken(user);
         return new AuthResponse(token, user.getUsername(), jwtService.getExpirationMs(), toProfileDto(user));
@@ -153,6 +170,10 @@ public class AuthController {
 
     @PostMapping("/google")
     public AuthResponse googleLogin(@Valid @RequestBody GoogleLoginRequest request) {
+        FeatureFlagsDto flags = featureFlagsService.getFlags();
+        if (!Boolean.TRUE.equals(flags.googleLoginEnabled())) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Google login is temporarily disabled");
+        }
         GoogleUserInfo info = googleTokenVerifierService.verify(request.credential());
         String email = info.email().trim().toLowerCase(Locale.ROOT);
         Instant now = Instant.now();
@@ -166,6 +187,9 @@ public class AuthController {
                 if (!"ACTIVE".equalsIgnoreCase(user.getStatus())) {
                     throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Account is banned");
                 }
+                if (Boolean.TRUE.equals(flags.maintenanceMode()) && !"SUPER_ADMIN".equalsIgnoreCase(user.getRole())) {
+                    throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "System is currently under maintenance");
+                }
                 user.setGoogleSub(info.sub());
                 if ((user.getAvatarUrl() == null || user.getAvatarUrl().isBlank())
                         && info.picture() != null && !info.picture().isBlank()) {
@@ -174,6 +198,12 @@ public class AuthController {
                 user.setUpdatedAt(now);
                 userRepository.save(user);
             } else {
+                if (Boolean.TRUE.equals(flags.maintenanceMode())) {
+                    throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "System is currently under maintenance");
+                }
+                if (!Boolean.TRUE.equals(flags.registrationEnabled())) {
+                    throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Registration is temporarily disabled");
+                }
                 isNewUser = true;
                 String username = generateUniqueUsername(request.preferredUsername(), email);
                 user = new UserEntity();
@@ -201,6 +231,9 @@ public class AuthController {
 
         if (!"ACTIVE".equalsIgnoreCase(user.getStatus())) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Account is banned");
+        }
+        if (Boolean.TRUE.equals(flags.maintenanceMode()) && !"SUPER_ADMIN".equalsIgnoreCase(user.getRole())) {
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "System is currently under maintenance");
         }
 
         String token = jwtService.generateToken(user);
@@ -340,6 +373,10 @@ public class AuthController {
 
         if (!"ACTIVE".equalsIgnoreCase(user.getStatus())) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Account is banned");
+        }
+        FeatureFlagsDto flags = featureFlagsService.getFlags();
+        if (Boolean.TRUE.equals(flags.maintenanceMode()) && !"SUPER_ADMIN".equalsIgnoreCase(user.getRole())) {
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "System is currently under maintenance");
         }
 
         user.setPasswordHash(passwordEncoder.encode(request.newPassword()));

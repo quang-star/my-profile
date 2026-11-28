@@ -9,6 +9,8 @@ import dev.quang.portfolio.repository.UploadedFileRepository;
 import dev.quang.portfolio.repository.UserRepository;
 import dev.quang.portfolio.security.AuthenticatedUser;
 import dev.quang.portfolio.service.AiCvParserService;
+import dev.quang.portfolio.service.FeatureFlagsService;
+import dev.quang.portfolio.service.HomeConfigService;
 import dev.quang.portfolio.service.PageService;
 import java.time.Instant;
 import java.util.*;
@@ -31,19 +33,25 @@ public class SuperAdminController {
     private final UploadedFileRepository uploadedFileRepository;
     private final PageService pageService;
     private final AiCvParserService aiCvParserService;
+    private final HomeConfigService homeConfigService;
+    private final FeatureFlagsService featureFlagsService;
 
     public SuperAdminController(
             UserRepository userRepository,
             PageRepository pageRepository,
             UploadedFileRepository uploadedFileRepository,
             PageService pageService,
-            AiCvParserService aiCvParserService
+            AiCvParserService aiCvParserService,
+            HomeConfigService homeConfigService,
+            FeatureFlagsService featureFlagsService
     ) {
         this.userRepository = userRepository;
         this.pageRepository = pageRepository;
         this.uploadedFileRepository = uploadedFileRepository;
         this.pageService = pageService;
         this.aiCvParserService = aiCvParserService;
+        this.homeConfigService = homeConfigService;
+        this.featureFlagsService = featureFlagsService;
     }
 
     @GetMapping("/overview")
@@ -233,6 +241,26 @@ public class SuperAdminController {
     @PostMapping("/ai-config/test")
     public TestAiConfigResponse testAiConfig(@RequestBody(required = false) TestAiConfigRequest request) {
         return aiCvParserService.testAndFetchModels(request);
+    }
+
+    @GetMapping("/home-config")
+    public HomeConfigDto getHomeConfig() {
+        return homeConfigService.getConfig();
+    }
+
+    @PutMapping("/home-config")
+    public HomeConfigDto updateHomeConfig(@RequestBody HomeConfigDto request) {
+        return homeConfigService.updateConfig(request);
+    }
+
+    @GetMapping("/feature-flags")
+    public FeatureFlagsDto getFeatureFlags() {
+        return featureFlagsService.getFlags();
+    }
+
+    @PutMapping("/feature-flags")
+    public FeatureFlagsDto updateFeatureFlags(@RequestBody FeatureFlagsDto request) {
+        return featureFlagsService.updateFlags(request);
     }
 
     private AdminUserDto toAdminUserDto(UserEntity user) {

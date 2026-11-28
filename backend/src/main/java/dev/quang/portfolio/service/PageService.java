@@ -36,6 +36,7 @@ public class PageService {
     private final NodeService nodeService;
     private final SystemDataSeeder systemDataSeeder;
     private final ViewCounterService viewCounterService;
+    private final FeatureFlagsService featureFlagsService;
 
     public PageService(
             PageRepository pageRepository,
@@ -44,7 +45,8 @@ public class PageService {
             ContactMessageRepository contactMessageRepository,
             NodeService nodeService,
             SystemDataSeeder systemDataSeeder,
-            ViewCounterService viewCounterService
+            ViewCounterService viewCounterService,
+            FeatureFlagsService featureFlagsService
     ) {
         this.pageRepository = pageRepository;
         this.userRepository = userRepository;
@@ -53,6 +55,7 @@ public class PageService {
         this.nodeService = nodeService;
         this.systemDataSeeder = systemDataSeeder;
         this.viewCounterService = viewCounterService;
+        this.featureFlagsService = featureFlagsService;
     }
 
     @Transactional(readOnly = true)
@@ -214,6 +217,8 @@ public class PageService {
         pageRepository.save(page);
 
         if (request.fromTemplateId() != null && !request.fromTemplateId().isBlank()) {
+            FeatureFlagsDto flags = featureFlagsService.getFlags();
+            featureFlagsService.requireFeature(flags.publicTemplatesEnabled(), currentUser, "Templates");
             PageEntity source = pageRepository.findById(request.fromTemplateId().trim())
                     .orElseThrow(() -> new NoSuchElementException("Template page not found"));
             boolean isPublicTemplate = source.isTemplate() && "PUBLIC".equalsIgnoreCase(source.getVisibility());

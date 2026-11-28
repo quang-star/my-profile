@@ -327,9 +327,8 @@ public class AiCvParserService {
         boolean enabled = readBoolean(KEY_ENABLED, defaultEnabled);
         String baseUrl = readString(KEY_BASE_URL, defaultBaseUrl);
         String apiKey = readApiKey();
-        String model = readString(KEY_MODEL, defaultModel);
         boolean available = enabled && baseUrl != null && !baseUrl.isBlank() && apiKey != null && !apiKey.isBlank();
-        return new AiStatusDto(available, model);
+        return new AiStatusDto(available);
     }
 
     public TestAiConfigResponse testAndFetchModels(TestAiConfigRequest request) {
@@ -441,14 +440,14 @@ public class AiCvParserService {
         try {
             Object userContent = buildParseCvUserContent(request, images, rawText, true);
             String assistantContent = sendChatCompletion(effectiveBase, apiKey, model, SYSTEM_PROMPT, userContent, 0.1, 8192);
-            return buildParsedResponse(assistantContent, model, notes);
+            return buildParsedResponse(assistantContent, notes);
         } catch (RouterCallException ex) {
             if (!images.isEmpty() && !rawText.isBlank() && ex.statusCode >= 400 && ex.statusCode < 500) {
-                notes.add("Model " + model + " không hỗ trợ ảnh đầu vào, đã tự chuyển sang phân tích bằng văn bản & tọa độ màu.");
+                notes.add("AI hiện tại không hỗ trợ ảnh đầu vào, đã tự chuyển sang phân tích bằng văn bản & tọa độ màu.");
                 try {
                     Object fallbackUserContent = buildParseCvUserContent(request, List.of(), rawText, false);
                     String fallbackContent = sendChatCompletion(effectiveBase, apiKey, model, SYSTEM_PROMPT, fallbackUserContent, 0.1, 8192);
-                    return buildParsedResponse(fallbackContent, model, notes);
+                    return buildParsedResponse(fallbackContent, notes);
                 } catch (Exception retryEx) {
                     throw new ResponseStatusException(
                             HttpStatus.BAD_GATEWAY,
@@ -482,7 +481,7 @@ public class AiCvParserService {
             collectTranslatableSlots(clonedDoc, originals, setters);
 
             if (originals.isEmpty()) {
-                return new TranslateDocResponse(clonedDoc, router.model(), 0);
+                return new TranslateDocResponse(clonedDoc, 0);
             }
 
             String userPrompt = "Target language: " + ("en".equals(target) ? "English" : "Vietnamese")
@@ -509,7 +508,7 @@ public class AiCvParserService {
                     applied++;
                 }
             }
-            return new TranslateDocResponse(clonedDoc, router.model(), applied);
+            return new TranslateDocResponse(clonedDoc, applied);
         } catch (ResponseStatusException ex) {
             throw ex;
         } catch (RouterCallException ex) {
@@ -582,11 +581,11 @@ public class AiCvParserService {
                             ? (Map<String, Object>) rawTheme
                             : Map.of();
                     String finalReply = reply.isEmpty() ? "Đã cập nhật trang theo yêu cầu." : reply;
-                    return new BuildPageResponse("apply", finalReply, theme, doc, router.model(), List.of());
+                    return new BuildPageResponse("apply", finalReply, theme, doc, List.of());
                 }
 
                 if (!reply.isEmpty()) {
-                    return new BuildPageResponse("chat", reply, Map.of(), null, router.model(), List.of());
+                    return new BuildPageResponse("chat", reply, Map.of(), null, List.of());
                 }
             } catch (Exception ignored) {
                 // Fall back to plain chat reply if model responded directly in prose
@@ -595,7 +594,7 @@ public class AiCvParserService {
             String fallbackReply = assistantOutput != null && !assistantOutput.isBlank()
                     ? assistantOutput.trim()
                     : "AI chưa có phản hồi rõ ràng, bạn thử hỏi lại cụ thể hơn nhé.";
-            return new BuildPageResponse("chat", fallbackReply, Map.of(), null, router.model(), List.of());
+            return new BuildPageResponse("chat", fallbackReply, Map.of(), null, List.of());
         } catch (ResponseStatusException ex) {
             throw ex;
         } catch (RouterCallException ex) {
@@ -849,7 +848,7 @@ public class AiCvParserService {
         return ex.getClass().getSimpleName();
     }
 
-    private ParseCvResponse buildParsedResponse(String rawOutput, String model, List<String> notes) throws IOException {
+    private ParseCvResponse buildParsedResponse(String rawOutput, List<String> notes) throws IOException {
         String cleaned = extractJsonObject(rawOutput);
         Map<String, Object> parsed = objectMapper.readValue(cleaned, MAP_TYPE);
 
@@ -865,7 +864,7 @@ public class AiCvParserService {
                 ? (Map<String, Object>) parsed.get("theme")
                 : Map.of();
 
-        return new ParseCvResponse(theme, doc, model, notes);
+        return new ParseCvResponse(theme, doc, notes);
     }
 
     private String extractJsonObject(String raw) {

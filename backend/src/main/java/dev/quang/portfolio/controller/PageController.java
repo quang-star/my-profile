@@ -4,6 +4,8 @@ import dev.quang.portfolio.dto.MultiTenantDtos.*;
 import dev.quang.portfolio.dto.PortfolioDtos.ContactMessageDto;
 import dev.quang.portfolio.dto.PortfolioDtos.ContactRequest;
 import dev.quang.portfolio.security.AuthenticatedUser;
+import dev.quang.portfolio.service.FeatureFlagsService;
+import dev.quang.portfolio.service.HomeConfigService;
 import dev.quang.portfolio.service.PageService;
 import jakarta.validation.Valid;
 import java.util.List;
@@ -17,9 +19,27 @@ import org.springframework.web.bind.annotation.*;
 public class PageController {
 
     private final PageService pageService;
+    private final HomeConfigService homeConfigService;
+    private final FeatureFlagsService featureFlagsService;
 
-    public PageController(PageService pageService) {
+    public PageController(
+            PageService pageService,
+            HomeConfigService homeConfigService,
+            FeatureFlagsService featureFlagsService
+    ) {
         this.pageService = pageService;
+        this.homeConfigService = homeConfigService;
+        this.featureFlagsService = featureFlagsService;
+    }
+
+    @GetMapping("/public/feature-flags")
+    public FeatureFlagsDto getPublicFeatureFlags() {
+        return featureFlagsService.getFlags();
+    }
+
+    @GetMapping("/public/home-config")
+    public HomeConfigDto getPublicHomeConfig() {
+        return homeConfigService.getConfig();
     }
 
     @GetMapping("/public/home")
@@ -52,9 +72,12 @@ public class PageController {
     @PostMapping("/public/pages/{pageId}/contact")
     @ResponseStatus(HttpStatus.CREATED)
     public ContactMessageDto submitPageContact(
+            Authentication authentication,
             @PathVariable String pageId,
             @Valid @RequestBody ContactRequest request
     ) {
+        FeatureFlagsDto flags = featureFlagsService.getFlags();
+        featureFlagsService.requireFeature(flags.publicContactEnabled(), AuthenticatedUser.optional(authentication), "Public contact form");
         return pageService.submitPageContact(pageId, request);
     }
 
